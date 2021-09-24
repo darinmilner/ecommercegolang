@@ -1,0 +1,4 @@
+Makefile
+database.yml
+dist/
+.vscode

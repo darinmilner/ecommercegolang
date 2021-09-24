@@ -1,0 +1,37 @@
+{{template "base" . }}
+
+{{define "title"}}
+    Payment Succeeded!
+{{end}}
+
+{{define "content"}}
+    {{$txn := index .Data "txn"}}
+    <h2 class="mt-5">Payment Succeeded</h2>
+    <hr>
+    <p>Customer Name: <span id="first-name"></span> <span id="last-name"></span></p>
+    <p>Payment Amount: <span id="amount"></span></p>
+   
+    <p>Last Four: <span id="last-four"></span></p>
+  
+{{end}}
+
+{{define "js"}}
+<script>
+    if (sessionStorage.firstName) {
+        document.getElementById("first-name").innerHTML = sessionStorage.firstName;
+    }
+     if (sessionStorage.lastName) {
+        document.getElementById("last-name").innerHTML = sessionStorage.lastName;
+    }
+
+     if (sessionStorage.amount) {
+        document.getElementById("amount").innerHTML = sessionStorage.amount;
+    }
+
+     if (sessionStorage.lastFour) {
+        document.getElementById("last-four").innerHTML = sessionStorage.lastFour;
+    }
+
+    sessionStorage.clear();
+</script>
+{{end}}

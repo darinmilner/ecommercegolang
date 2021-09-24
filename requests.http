@@ -1,0 +1,11 @@
+@endpoint = http://localhost:4000
+@apiendpoint = http://localhost:4001/api
+
+Get {{endpoint}}/virtual-terminal
+###
+
+Get {{apiendpoint}}/payment-intent
+###
+
+Get {{apiendpoint}}/widget/1
+###
