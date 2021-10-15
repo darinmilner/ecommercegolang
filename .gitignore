@@ -2,3 +2,4 @@ Makefile
 database.yml
 dist/
 .vscode
+kube.yml

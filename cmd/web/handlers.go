@@ -1,17 +1,31 @@
 package main
 
 import (
+	"bytes"
 	"ecommerce/internal/cards"
 	"ecommerce/internal/encryption"
 	"ecommerce/internal/models"
 	"ecommerce/internal/urlsigner"
+	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 )
+
+type Invoice struct {
+	ID        int       `json:"id"`
+	Quantity  int       `json:"quantity"`
+	Amount    int       `json:"amount"`
+	Product   string    `json:"product"`
+	FirstName string    `json:"firstName"`
+	LastName  string    `json:"lastName"`
+	Email     string    `json:"email"`
+	CreatedAt time.Time `json:"createdAt"`
+}
 
 func (app *application) VirtualTerminal(w http.ResponseWriter, r *http.Request) {
 
@@ -158,17 +172,63 @@ func (app *application) PaymentSuccess(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:     time.Now(),
 	}
 
-	_, err = app.SaveOrder(order)
+	orderID, err := app.SaveOrder(order)
 	if err != nil {
 		app.errorLog.Println(err)
 		return
 	}
 
+	//call invoice service
+	inv := Invoice{
+		ID:        orderID,
+		Amount:    order.Amount,
+		Product:   "Widget",
+		Quantity:  order.Quantity,
+		FirstName: txnData.FirstName,
+		LastName:  txnData.LastName,
+		Email:     txnData.Email,
+		CreatedAt: time.Now(),
+	}
+
+	err = app.callInvoiceMicro(inv)
+	if err != nil {
+		app.errorLog.Println(err)
+	}
 	//write data to the session and redirect
 	app.Session.Put(r.Context(), "receipt", txnData)
 
 	http.Redirect(w, r, "/receipt", http.StatusSeeOther)
 
+}
+
+func (app *application) callInvoiceMicro(inv Invoice) error {
+	url := "http://localhost:5000/invoice/create-and-send"
+	out, err := json.MarshalIndent(inv, "", "\t")
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(out))
+
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+
+	defer resp.Body.Close()
+	app.infoLog.Println(resp.Body)
+
+	return nil
 }
 
 //VirtualTerminalPaymentSuccess shows success page for transactions
@@ -431,6 +491,10 @@ func (app *application) ShowSale(w http.ResponseWriter, r *http.Request) {
 	stringMap := make(map[string]string)
 	stringMap["title"] = "Sale"
 	stringMap["cancel"] = "/admin/all-sales"
+	stringMap["refund-url"] = "/api/admin/refund"
+	stringMap["refund-btn"] = "Refund Order"
+	stringMap["refund-status"] = "Refunded"
+
 	if err := app.renderTemplate(w, r, "sale", &templateData{
 		StringMap: stringMap,
 	}); err != nil {
@@ -442,9 +506,27 @@ func (app *application) ShowSubscription(w http.ResponseWriter, r *http.Request)
 	stringMap := make(map[string]string)
 	stringMap["title"] = "Subscription"
 	stringMap["cancel"] = "/admin/all-subscriptions"
+	stringMap["refund-url"] = "/api/admin/cancel-subscription"
+	stringMap["refund-btn"] = "Cancel Subscription"
+	stringMap["refund-status"] = "Canceled"
+
 	if err := app.renderTemplate(w, r, "sale", &templateData{
 		StringMap: stringMap,
 	}); err != nil {
+		app.errorLog.Println(err)
+	}
+}
+
+//AllUsers shows all the users' info
+func (app *application) AllUsers(w http.ResponseWriter, r *http.Request) {
+	if err := app.renderTemplate(w, r, "all-users", &templateData{}); err != nil {
+		app.errorLog.Println(err)
+	}
+}
+
+//OneUser shows one user's info
+func (app *application) OneUser(w http.ResponseWriter, r *http.Request) {
+	if err := app.renderTemplate(w, r, "one-user", &templateData{}); err != nil {
 		app.errorLog.Println(err)
 	}
 }

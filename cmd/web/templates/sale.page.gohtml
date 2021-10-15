@@ -6,7 +6,13 @@
 
 {{define "content"}}
     <h2 class="mt-5">Sale</h2>
+
+    <span id="refunded" class="badge bg-danger d-none">{{index .StringMap "refund-status"}}</span>
+    <span id="charged" class="badge bg-success d-none">Charged</span>
+
     <hr>
+
+    <div class="alert alert-danger text-center d-none" id="messages"></div>
     <div>
         <strong>Order No: </strong><span id="order-no"></span><br>
         <strong>Customer: </strong><span id="customer"></span><br>
@@ -19,15 +25,36 @@
     <hr>
 
     <a class="btn btn-danger" href='{{index .StringMap "cancel"}}'>Cancel</a>
-     <a class="btn btn-warning" href="#!">Refund</a>
+     <a id="refund-btn" class="btn btn-warning d-none" href="#!">{{index .StringMap "refund-btn"}}</a>
 
+    <input type="hidden" id="pi" value="">
+    <input type="hidden" id="charge-amount" value="">
+    <input type="hidden" id="currency" value="">
 {{end}}
 
 {{define "js"}}
+    <script src="//cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <script>
         let token = localStorage.getItem("token");
         let id = window.location.pathname.split("/").pop();
+    
+        let messages = document.getElementById("messages");
+    
+    function showError(msg){
+        messages.classList.add("alert-danger");
+        messages.classList.remove("alert-success");
+        messages.classList.remove("d-none");
+        messages.innerText = msg;
+    }
 
+    function showSuccess(msg) {
+        messages.classList.add("alert-success");
+        messages.classList.remove("alert-danger");
+        messages.classList.remove("d-none");
+        messages.innerText = msg;
+    }
+
+    document.addEventListener("DOMContentLoaded", function(){
         const requestOptions = {
             method: "post",
             headers: {
@@ -42,6 +69,8 @@
         .then(function(data) {
             console.log(data);
             console.log(data.customer.email);
+            console.log(data.transaction.paymentIntent);
+
             if (data) {
                 document.getElementById("order-no").innerHTML = data.id;
                 document.getElementById("customer").innerHTML = data.customer.firstName + " " + data.customer.lastName;
@@ -49,16 +78,87 @@
                 document.getElementById("product").innerHTML = data.widget.name;
                 document.getElementById("quantity").innerHTML = data.quantity;
                 document.getElementById("amount").innerHTML = formatCurrency(data.transaction.amount);
+                document.getElementById("pi").value = data.transaction.paymentIntent;
+                document.getElementById("charge-amount").value = data.transaction.amount;
+                document.getElementById("currency").value = data.transaction.currency;
+            
+                if(data.statusId === 1) {
+                     document.getElementById("refund-btn").classList.remove("d-none");
+                      document.getElementById("charged").classList.remove("d-none");
+                }else {
+                      document.getElementById("refunded").classList.remove("d-none");
+                }
             }
            
         });
+    })
 
-        function formatCurrency(amount) {
+     function formatCurrency(amount) {
             let c = parseFloat(amount/100);
             return c.toLocaleString("en-US", {
                 style: "currency",
                 currency: "USD",
             }); 
         }
-    </script>
+
+    document.getElementById("refund-btn").addEventListener("click", function(){
+        console.log("Refund click");
+        Swal.fire({
+            title: 'Are you sure?',
+            text: "You won't be able to revert this!",
+            icon: 'question',
+            showCancelButton: true,
+            confirmButtonColor: '#059922',
+            cancelButtonColor: '#d33',
+            confirmButtonText: "{{index .StringMap "refund-btn"}}"
+        }).then((result) => {
+    if (result.isConfirmed) {
+
+        let parsedId = parseInt(id, 10);
+        console.log(`id ${parsedId}`);
+
+        let payload = {
+            pi: document.getElementById("pi").value,
+            currency: document.getElementById("currency").value,
+            amount: parseInt(document.getElementById("charge-amount").value, 10),
+            id: parsedId,
+        }
+
+        const requestOptions = {
+             method: "post",
+            headers: {
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "Authorization": "Bearer " + token,
+            },
+            body: JSON.stringify(payload),
+        }
+        let url = {{index .StringMap "refund-url"}};
+        console.log("URL", url)
+        fetch("{{.API}}{{index .StringMap "refund-url"}}", requestOptions)
+        .then(response => response.json())
+        .then(function(data) {
+            console.log(data);
+            if (data.error) {
+                showError(data.message);
+            }else{
+                 Swal.fire(
+                    'Refund Successful',
+                    'Refund has been processed',
+                    'success'
+                );
+            
+                showSuccess("{{index .StringMap "refund-btn"}} Successful");
+                document.getElementById("refund-btn").classList.add("d-none");
+                document.getElementById("refunded").classList.remove("d-none");
+                document.getElementById("charged").classList.add("d-none");
+            
+                
+                }
+            });
+           }
+        })
+        
+    });
+     </script>
 {{end}}

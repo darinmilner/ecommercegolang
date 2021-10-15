@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -101,4 +102,48 @@ func (app *application) matchPasswords(hash, password string) (bool, error) {
 	}
 
 	return true, nil
+}
+
+func (app *application) callInvoiceMicro(inv Invoice) error {
+	url := "http://localhost:5000/invoice/create-and-send"
+	out, err := json.MarshalIndent(inv, "", "\t")
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(out))
+
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+
+	defer resp.Body.Close()
+	app.infoLog.Println(resp.Body)
+
+	return nil
+}
+
+func (app *application) failedValidation(w http.ResponseWriter, r *http.Request, errors map[string]string) {
+	var payload struct {
+		Error   bool              `json:"error"`
+		Message string            `json:"message"`
+		Errors  map[string]string `json:"errors"`
+	}
+
+	payload.Error = true
+	payload.Message = "Validation failed"
+	payload.Errors = errors
+
+	app.writeJSON(w, http.StatusUnprocessableEntity, payload)
 }

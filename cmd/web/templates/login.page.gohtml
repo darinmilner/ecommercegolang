@@ -9,7 +9,7 @@
 <div class="col-md-6 offset-md-3">
     <br>
     <div class="alert alert-danger text-center d-none" id="login-messages"></div>
-    <form action="" method="POST" action="/login"
+    <form  method="POST" action="/login"
     name="login-form" id="login-form"
     class="d-block needs-validation login-form"
     autocomplete="off" novalidate="">
@@ -100,7 +100,7 @@
                 if (data.error=== false ){
                     localStorage.setItem("token", data.authToken.token);
                     localStorage.setItem("expiry", data.authToken.expiry);
-                    showSuccess()
+                    showSuccess();
                    // location.href = "/";
                    document.getElementById("login-form").submit();
                 }else {

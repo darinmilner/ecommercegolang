@@ -13,3 +13,4 @@ services:
       MYSQL_PASSWORD: root
     volumes:
       - ./init:/docker-entrypoint-initdb.d
+#docker-compose exec -T db pg_dumpall -U user --database widgets --data-only > dump.sql

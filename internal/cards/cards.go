@@ -7,6 +7,7 @@ import (
 	"github.com/stripe/stripe-go/v72/customer"
 	"github.com/stripe/stripe-go/v72/paymentintent"
 	"github.com/stripe/stripe-go/v72/paymentmethod"
+	"github.com/stripe/stripe-go/v72/refund"
 	"github.com/stripe/stripe-go/v72/sub"
 )
 
@@ -144,4 +145,39 @@ func cardErrorMessage(code stripe.ErrorCode) string {
 	}
 
 	return msg
+}
+
+func (c *Card) Refund(pi string, amount int) error {
+	stripe.Key = c.Secret
+
+	amountToRefund := int64(amount)
+
+	refundParams := &stripe.RefundParams{
+		Amount:        &amountToRefund,
+		PaymentIntent: &pi,
+	}
+
+	//TODO: store refunds in DB
+	_, err := refund.New(refundParams)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+
+	return nil
+}
+func (c *Card) CancelSubscription(subID string) error {
+	stripe.Key = c.Secret
+
+	params := &stripe.SubscriptionParams{
+		CancelAtPeriodEnd: stripe.Bool(true),
+	}
+
+	_, err := sub.Update(subID, params)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+
+	return nil
 }

@@ -5,6 +5,7 @@ import (
 	"ecommerce/internal/encryption"
 	"ecommerce/internal/models"
 	"ecommerce/internal/urlsigner"
+	"ecommerce/internal/validator"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+
 	"github.com/stripe/stripe-go/v72"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -32,6 +34,17 @@ type stripePayload struct {
 	ProductID     string `json:"productId"`
 	FirstName     string `json:"firstName"`
 	LastName      string `json:"lastName"`
+}
+
+type Invoice struct {
+	ID        int       `json:"id"`
+	Quantity  int       `json:"quantity"`
+	Amount    int       `json:"amount"`
+	Product   string    `json:"product"`
+	FirstName string    `json:"firstName"`
+	LastName  string    `json:"lastName"`
+	Email     string    `json:"email"`
+	CreatedAt time.Time `json:"createdAt"`
 }
 
 type jsonResponse struct {
@@ -134,6 +147,16 @@ func (app *application) CreateCustomerAndSubscribe(w http.ResponseWriter, r *htt
 		return
 	}
 
+	// validate data
+	v := validator.New()
+	v.Check(len(data.FirstName) > 1, "firstName", "name must be at least 2 characters")
+	v.Check(len(data.LastName) > 1, "lastName", "name must be at least 2 characters")
+
+	if !v.Valid() {
+		app.failedValidation(w, r, v.Errors)
+		return
+	}
+
 	app.infoLog.Println(data.Email, data.LastFour, data.PaymentMethod, data.Plan)
 
 	card := cards.Card{
@@ -207,6 +230,8 @@ func (app *application) CreateCustomerAndSubscribe(w http.ResponseWriter, r *htt
 			ExpiryMonth:         data.ExpiryMonth,
 			ExpiryYear:          data.ExpiryYear,
 			TransactionStatusID: 2,
+			PaymentIntent:       subscription.ID,
+			PaymentMethod:       data.PaymentMethod,
 		}
 
 		txnID, err := app.SaveTransaction(txn)
@@ -228,13 +253,29 @@ func (app *application) CreateCustomerAndSubscribe(w http.ResponseWriter, r *htt
 			UpdatedAt:     time.Now(),
 		}
 
-		_, err = app.SaveOrder(order)
+		orderID, err := app.SaveOrder(order)
 		if err != nil {
 			app.errorLog.Println(err)
 			okay = false
 			return
 		}
 
+		//send invoice
+		inv := Invoice{
+			ID:        orderID,
+			Amount:    2000,
+			Product:   "Widget Monthy Subscription",
+			Quantity:  order.Quantity,
+			FirstName: data.FirstName,
+			LastName:  data.LastName,
+			Email:     data.Email,
+			CreatedAt: time.Now(),
+		}
+
+		err = app.callInvoiceMicro(inv)
+		if err != nil {
+			app.errorLog.Println(err)
+		}
 	}
 
 	resp := jsonResponse{
@@ -311,9 +352,11 @@ func (app *application) CreateAuthToken(w http.ResponseWriter, r *http.Request) 
 		app.invalidCredentials(w)
 		return
 	}
-
+	log.Println(user.Password)
+	log.Println(userInput.Password)
 	//validate the password
 	validPassword, err := app.matchPasswords(user.Password, userInput.Password)
+	log.Print(validPassword)
 	if err != nil {
 		log.Println(err)
 		app.invalidCredentials(w)
@@ -423,7 +466,7 @@ func (app *application) Register(w http.ResponseWriter, r *http.Request) {
 	newUser.FirstName = userInput.FirstName
 	newUser.LastName = userInput.LastName
 	newUser.Email = userInput.Email
-	newUser.DisplayName = userInput.DisplayName
+	//newUser.DisplayName = userInput.DisplayName
 	newUser.Password = userInput.Password
 
 	id, err := app.DB.InsertUser(newUser)
@@ -579,6 +622,7 @@ func (app *application) SendPasswordResetEmail(w http.ResponseWriter, r *http.Re
 	app.writeJSON(w, http.StatusCreated, resp)
 }
 
+//ResetPassword resets a user's password
 func (app *application) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
 		Email    string `json:"email"`
@@ -635,26 +679,82 @@ func (app *application) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	app.writeJSON(w, http.StatusCreated, resp)
 }
 
+//AllSales gets all sales from the DB
 func (app *application) AllSales(w http.ResponseWriter, r *http.Request) {
-	allSales, err := app.DB.GetAllOrders()
+	var payload struct {
+		PageSize    int `json:"pageSize"`
+		CurrentPage int `json:"page"`
+	}
+
+	err := app.readJSON(w, r, &payload)
+	log.Println("Page size ", payload.PageSize)
+
 	if err != nil {
-		app.errorLog.Print(err)
+		app.errorLog.Print("payload ", err)
 		app.badRequest(w, r, err)
 		return
 	}
 
-	app.writeJSON(w, http.StatusOK, allSales)
+	allSales, lastPage, totalRecords, err := app.DB.GetAllOrdersPaginated(payload.PageSize, payload.CurrentPage)
+	if err != nil {
+		app.errorLog.Print("DB ", err)
+		app.badRequest(w, r, err)
+		return
+	}
+
+	var resp struct {
+		PageSize     int             `json:"pageSize"`
+		CurrentPage  int             `json:"currentPage"`
+		TotalRecords int             `json:"totalRecords"`
+		LastPage     int             `json:"lastPage"`
+		Orders       []*models.Order `json:"orders"`
+	}
+
+	resp.CurrentPage = payload.CurrentPage
+	resp.PageSize = payload.PageSize
+	resp.LastPage = lastPage
+	resp.TotalRecords = totalRecords
+	resp.Orders = allSales
+
+	app.writeJSON(w, http.StatusOK, resp)
 }
 
 func (app *application) AllSubscriptions(w http.ResponseWriter, r *http.Request) {
-	allSales, err := app.DB.GetAllSubscriptions()
+	var payload struct {
+		PageSize    int `json:"pageSize"`
+		CurrentPage int `json:"page"`
+	}
+
+	err := app.readJSON(w, r, &payload)
+	log.Println("Page size ", payload.PageSize)
+
+	if err != nil {
+		app.errorLog.Print("payload ", err)
+		app.badRequest(w, r, err)
+		return
+	}
+	allSales, lastPage, totalRecords, err := app.DB.GetAllSubscriptionsPaginated(payload.PageSize, payload.CurrentPage)
 	if err != nil {
 		app.errorLog.Print(err)
 		app.badRequest(w, r, err)
 		return
 	}
 
-	app.writeJSON(w, http.StatusOK, allSales)
+	var resp struct {
+		PageSize     int             `json:"pageSize"`
+		CurrentPage  int             `json:"currentPage"`
+		TotalRecords int             `json:"totalRecords"`
+		LastPage     int             `json:"lastPage"`
+		Orders       []*models.Order `json:"orders"`
+	}
+
+	resp.CurrentPage = payload.CurrentPage
+	resp.PageSize = payload.PageSize
+	resp.LastPage = lastPage
+	resp.TotalRecords = totalRecords
+	resp.Orders = allSales
+
+	app.writeJSON(w, http.StatusOK, resp)
 }
 
 func (app *application) GetSale(w http.ResponseWriter, r *http.Request) {
@@ -674,4 +774,232 @@ func (app *application) GetSale(w http.ResponseWriter, r *http.Request) {
 	}
 
 	app.writeJSON(w, http.StatusOK, order)
+}
+
+func (app *application) RefundCharge(w http.ResponseWriter, r *http.Request) {
+	var chargeToRefund struct {
+		ID            int    `json:"id"`
+		PaymentIntent string `json:"pi"`
+		Amount        int    `json:"amount"`
+		Currency      string `json:"currency"`
+	}
+
+	err := app.readJSON(w, r, &chargeToRefund)
+	if err != nil {
+		app.errorLog.Print(err)
+		app.badRequest(w, r, err)
+		return
+	}
+
+	//validate amount against order
+	//call DB order by ID
+
+	card := cards.Card{
+		Secret:   app.config.stripe.secretKey,
+		Key:      app.config.stripe.key,
+		Currency: chargeToRefund.Currency,
+	}
+
+	err = card.Refund(chargeToRefund.PaymentIntent, chargeToRefund.Amount)
+	if err != nil {
+		app.errorLog.Print(err)
+		app.badRequest(w, r, err)
+		return
+	}
+
+	//update DB status
+	err = app.DB.UpdateOrderStatus(chargeToRefund.ID, 2)
+	if err != nil {
+		app.errorLog.Print(err)
+		app.badRequest(w, r, errors.New("the charge was refunded but the database failed to update"))
+		return
+	}
+
+	var resp struct {
+		Error   bool   `json:"error"`
+		Message string `json:"message"`
+	}
+
+	resp.Error = false
+	resp.Message = "Charge refunded"
+
+	app.writeJSON(w, http.StatusOK, resp)
+}
+
+func (app *application) CancelSubscription(w http.ResponseWriter, r *http.Request) {
+
+	var subToCancel struct {
+		ID            int    `json:"id"`
+		PaymentIntent string `json:"pi"`
+		Currency      string `json:"currency"`
+	}
+
+	err := app.readJSON(w, r, &subToCancel)
+	log.Println(subToCancel.ID)
+	log.Println(subToCancel.PaymentIntent)
+	log.Println(subToCancel.Currency)
+	if err != nil {
+		log.Println(err)
+		app.badRequest(w, r, err)
+		return
+	}
+
+	card := cards.Card{
+		Secret:   app.config.stripe.secretKey,
+		Key:      app.config.stripe.key,
+		Currency: subToCancel.Currency,
+	}
+
+	err = card.CancelSubscription(subToCancel.PaymentIntent)
+	if err != nil {
+		log.Println(err)
+		app.badRequest(w, r, err)
+		return
+	}
+	//update DB status
+	err = app.DB.UpdateOrderStatus(subToCancel.ID, 3)
+	if err != nil {
+		app.errorLog.Print(err)
+		app.badRequest(w, r, errors.New("the subscription was cancelled but the database failed to update"))
+		return
+	}
+
+	var resp struct {
+		Error   bool   `json:"error"`
+		Message string `json:"message"`
+	}
+
+	resp.Error = false
+	resp.Message = "Subscription canceled"
+
+	app.writeJSON(w, http.StatusOK, resp)
+
+}
+
+func (app *application) AllUsers(w http.ResponseWriter, r *http.Request) {
+	allUsers, err := app.DB.GetAllUsers()
+	if err != nil {
+		app.badRequest(w, r, err)
+		return
+	}
+
+	app.writeJSON(w, http.StatusOK, allUsers)
+}
+
+func (app *application) OneUser(w http.ResponseWriter, r *http.Request) {
+
+	id := chi.URLParam(r, "id")
+	userID, err := strconv.Atoi(id)
+	if err != nil {
+		app.badRequest(w, r, err)
+		return
+	}
+
+	user, err := app.DB.GetOneUser(userID)
+	if err != nil {
+		app.badRequest(w, r, err)
+		return
+	}
+
+	app.writeJSON(w, http.StatusOK, user)
+}
+
+func (app *application) EditUser(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	userID, err := strconv.Atoi(id)
+	if err != nil {
+		app.badRequest(w, r, err)
+		return
+	}
+
+	var user models.User
+
+	err = app.readJSON(w, r, &user)
+	if err != nil {
+		app.badRequest(w, r, err)
+		return
+	}
+	log.Print(&user)
+	log.Println("user pw: ", user.Password)
+	if userID > 0 {
+		//edit user
+		err = app.DB.EditUser(user)
+		if err != nil {
+			app.badRequest(w, r, err)
+			return
+		}
+
+		if user.Password != "" {
+
+			newHash, err := bcrypt.GenerateFromPassword([]byte(user.Password), 12)
+			if err != nil {
+				app.badRequest(w, r, err)
+				return
+			}
+
+			err = app.DB.UpdatePasswordForUser(user, string(newHash))
+			if err != nil {
+				app.badRequest(w, r, err)
+				return
+			}
+		}
+
+	} else {
+		//add a new user
+		newHash, err := bcrypt.GenerateFromPassword([]byte(user.Password), 12)
+		//user.DisplayName = "New User"
+		log.Print(string(newHash))
+		if err != nil {
+			app.badRequest(w, r, err)
+			return
+		}
+
+		err = app.DB.AddNewUser(user, string(newHash))
+		if err != nil {
+			app.badRequest(w, r, err)
+			return
+		}
+
+		var jResp struct {
+			Error   bool   `json:"error"`
+			Message string `json:"message"`
+		}
+
+		jResp.Error = false
+		jResp.Message = "New User Created"
+		app.writeJSON(w, http.StatusCreated, jResp)
+		return
+	}
+
+	var resp struct {
+		Error   bool   `json:"error"`
+		Message string `json:"message"`
+	}
+
+	resp.Error = false
+	app.writeJSON(w, http.StatusOK, resp)
+
+}
+
+func (app *application) DeleteUser(w http.ResponseWriter, r *http.Request) {
+
+	id := chi.URLParam(r, "id")
+	userID, err := strconv.Atoi(id)
+	if err != nil {
+		app.badRequest(w, r, err)
+		return
+	}
+
+	err = app.DB.DeleteUser(userID)
+	if err != nil {
+		app.badRequest(w, r, err)
+		return
+	}
+	var resp struct {
+		Error   bool   `json:"error"`
+		Message string `json:"message"`
+	}
+
+	resp.Error = false
+	app.writeJSON(w, http.StatusOK, resp)
 }

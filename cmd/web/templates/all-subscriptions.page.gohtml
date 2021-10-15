@@ -10,19 +10,64 @@
             <th>Customer</th>
             <th>Product</th>
             <th>Amount</th>
-
+            <th>Status</th>
         </thead>
 
         <tbody>
         </body>
     </table>
+
+          <ul id="paginator" class="pagination">
+
+        </ul>
+    </nav>
 {{end}}
 
 
 {{define "js"}}
     <script>
+        let currentPage = 1;
+        let pageSize = 3;
+
+    function paginator(pages, curPage) {
+        let p = document.getElementById("paginator");
+        let html = `
+            <li class="page-item"><a href="#!" class="page-link pager" data-page="${curPage - 1}">&lt;</a></li>
+        `
+
+        for (var i = 0; i <= pages; i++) {
+            html += `
+            <li class="page-item"><a href="#!" class="page-link pager" data-page="${i + 1}">${i + 1}</a></li>
+        `
+        }
+
+         html += `
+            <li class="page-item"><a href="#!" class="page-link pager" data-page="${curPage + 1}">&gt;</a></li>
+        `
+
+        p.innerHTML = html;
+
+        let pageBtns = document.getElementsByClassName("pager");
+        for(var j = 0; j < pageBtns.length; j++) {
+            pageBtns[j].addEventListener("click", function(evt) {
+                let desiredPage = evt.target.getAttribute("data-page");
+                console.log("Clicked page ", desiredPage);
+                if((desiredPage > 0 ) && (desiredPage <= pages + 1)){
+                    console.log("Going to page", desiredPage)
+                    updateTable(pageSize, desiredPage);
+                }
+            });
+        }
+    }
+
+    function updateTable(ps, cp) {
         let token = localStorage.getItem("token");
         let tbody = document.getElementById("subscriptions-table").getElementsByTagName("tbody")[0];
+        tbody.innerHTML = "";
+        let body = {
+            pageSize: parseInt(ps, 10),
+            page: parseInt(cp, 10),
+        }
 
         const requestOptions = {
             method: "post",
@@ -31,6 +76,7 @@
                 "Content-Type": "application/json",
                 "Authorization": "Bearer " + token,
             },
+            body: JSON.stringify(body),
         }
 
         fetch("{{.API}}/api/admin/all-subscriptions", requestOptions)
@@ -38,13 +84,13 @@
         .then(function(data) {
             console.log(data);
 
-            if (data) {
-            data.forEach(function(i) {
+            if (data.orders) {
+            data.orders.forEach(function(i) {
                 let newRow = tbody.insertRow();
                 let newCell = newRow.insertCell();
 
                 newCell.innerHTML = `
-                    <a href="/admin/all-subscriptions/${i.id}">Order ID ${i.id} </a>
+                    <a href="/admin/subscriptions/${i.id}">Order ID ${i.id} </a>
                 `
 
                 newCell = newRow.insertCell();
@@ -57,17 +103,36 @@
 
                 let cur = formatCurrency(i.transaction.amount);
                 newCell = newRow.insertCell();
-                item = document.createTextNode(cur + " Per Month");
+                item = document.createTextNode(cur + " month");
                 newCell.appendChild(item);
+           
+                newCell = newRow.insertCell();
+                console.log(i.statusId);
+                if (i.statusId != 1) {
+                    newCell.innerHTML = `
+                        <span class="badge bg-danger">CANCELLED</span>
+                    `
+                }else{
+                    newCell.innerHTML = `
+                        <span class="badge bg-success">CHARGED</span>
+                    `
+                }
+           
             });
+            paginator(data.lastPage, data.currentPage);
            } else {
                 let newRow = tbody.insertRow();
                 let newCell = newRow.insertCell();
 
-                newCell.setAttribute("colspan", "4");
-                newCell.innerHTML = "No subscriptions";
+                newCell.setAttribute("colspan", "5");
+                newCell.innerHTML = "No sales";
            }
         });
+    }
+    
+       document.addEventListener("DOMContentLoaded", function() {
+            updateTable(pageSize, currentPage);
+       });
 
         function formatCurrency(amount) {
             let c = parseFloat(amount/100);

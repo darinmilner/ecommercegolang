@@ -60,8 +60,8 @@ func main() {
 
 	getFlags()
 
-	cfg.stripe.key = "pk_testfakekeys"
-	cfg.stripe.secretKey = "sk_test_fakekeys"
+	cfg.stripe.key = os.Getenv("STRIPE_KEYS")
+	cfg.stripe.key = os.Getenv("SECRET_KEYS")
 
 	infoLog := log.New(os.Stdout, "INFO\t", log.Ldate|log.Ltime)
 	errorLog := log.New(os.Stdout, "ERROR\t", log.Ldate|log.Ltime|log.Lshortfile)
